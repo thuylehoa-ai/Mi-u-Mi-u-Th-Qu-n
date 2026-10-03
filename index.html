@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Miêu Miêu Thư Quán</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--bg:#0e0a0f;--fg:#f4e9ef;--mut:#a88fa0;--ac:#ff5fa8;--bd:#2c1f29;--on:#0e0a0f;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--bd)}
+.logo{color:var(--fg);text-decoration:none;font:700 21px Palatino,"Iowan Old Style",Georgia,serif}
+main{max-width:660px;margin:0 auto;padding:20px 16px 60px}
+a{color:var(--ac)}
+.row{display:block;padding:14px 0;border-bottom:1px solid var(--bd);color:inherit;text-decoration:none}
+.row b{font:600 18px Palatino,"Iowan Old Style",Georgia,serif}
+.mut{color:var(--mut);font-size:14px}
+button,.btn,input{font:inherit;padding:9px 14px;border-radius:6px;border:1px solid var(--ac)}
+button,.btn{background:var(--ac);color:var(--on);cursor:pointer;text-decoration:none;display:inline-block}
+.ghost{background:none;color:var(--ac)}
+input{width:100%;margin-bottom:10px;background:none;color:var(--fg);border-color:var(--bd)}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+h2{font:700 26px/1.3 Palatino,"Iowan Old Style",Georgia,serif;margin:8px 0 12px}
+.read{font:20px/1.9 Palatino,"Iowan Old Style",Georgia,serif;white-space:pre-wrap}
+.nav{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:20px 0}
+</style>
+</head>
+<body>
+<header><a class="logo" href="#/">Miêu Miêu Thư Quán</a><span id="auth"></span></header>
+<main id="app"></main>
+<script>
+// === DÁN 2 GIÁ TRỊ TỪ SUPABASE: Project Settings > API ===
+const SUPABASE_URL = "DÁN_PROJECT_URL_VÀO_ĐÂY";
+const SUPABASE_KEY = "DÁN_ANON_PUBLIC_KEY_VÀO_ĐÂY";
+// ========================================================
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = s => document.querySelector(s), app = $("#app");
+let user = null;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function home() {
+  const { data } = await db.from("stories").select("title,slug,description").order("created_at", { ascending: false });
+  app.innerHTML = (data || []).map(s => `<a class="row" href="#/t/${esc(s.slug)}"><b>${esc(s.title)}</b><div class="mut">${esc(s.description)}</div></a>`).join("") || "<p class='mut'>Chưa có truyện nào.</p>";
+}
+
+async function story(slug) {
+  const { data: s } = await db.from("stories").select("*").eq("slug", slug).maybeSingle();
+  if (!s) return app.innerHTML = "<p>Không tìm thấy truyện.</p>";
+  const { data: ch } = await db.from("chapters").select("number,title").eq("story_id", s.id).order("number");
+  let last = 0;
+  if (user) { const { data: b } = await db.from("bookmarks").select("last_chapter").eq("story_id", s.id).maybeSingle(); last = b?.last_chapter || 0; }
+  app.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.description)}</p>` +
+    (last ? `<p><a class="btn" href="#/t/${esc(slug)}/${last}">Đọc tiếp chương ${last}</a></p>` : "") +
+    (ch || []).map(c => `<a class="row" href="#/t/${esc(slug)}/${c.number}">Chương ${c.number}${c.title ? ": " + esc(c.title) : ""}</a>`).join("");
+}
+
+async function chapter(slug, n) {
+  n = +n;
+  const { data: s } = await db.from("stories").select("id,title").eq("slug", slug).maybeSingle();
+  if (!s) return app.innerHTML = "<p>Không tìm thấy truyện.</p>";
+  const { data: c } = await db.from("chapters").select("*").eq("story_id", s.id).eq("number", n).maybeSingle();
+  if (!c) return app.innerHTML = "<p>Không có chương này.</p>";
+  const { count } = await db.from("chapters").select("*", { count: "exact", head: true }).eq("story_id", s.id).gt("number", n);
+  if (user) db.from("bookmarks").upsert({ user_id: user.id, story_id: s.id, last_chapter: n, updated_at: new Date().toISOString() });
+  const e = esc(slug);
+  const nav = `<div class="nav">${n > 1 ? `<a class="btn" href="#/t/${e}/${n - 1}">Chương trước</a>` : "<span></span>"}<a class="btn ghost" href="#/t/${e}">Mục lục</a>${count ? `<a class="btn" href="#/t/${e}/${n + 1}">Chương sau</a>` : "<span></span>"}</div>`;
+  app.innerHTML = `<div class="mut">${esc(s.title)}</div><h2>Chương ${n}${c.title ? ": " + esc(c.title) : ""}</h2>${nav}<div class="read">${esc(c.content)}</div>${nav}`;
+  scrollTo(0, 0);
+}
+
+function login() {
+  app.innerHTML = `<h2>Đăng nhập hoặc đăng ký</h2><input id="em" type="email" placeholder="Email" autocomplete="email"><input id="pw" type="password" placeholder="Mật khẩu (từ 6 ký tự)" autocomplete="current-password"><button id="li">Đăng nhập</button> <button id="su" class="ghost">Tạo tài khoản</button><p id="msg" class="mut"></p>`;
+  const go = async up => {
+    const a = { email: $("#em").value.trim(), password: $("#pw").value };
+    const { error } = up ? await db.auth.signUp(a) : await db.auth.signInWithPassword(a);
+    $("#msg").textContent = error ? error.message : (up ? "Đã tạo tài khoản. Nếu được yêu cầu, hãy bấm link xác nhận trong email." : "");
+    if (!error && !up) location.hash = "#/";
+  };
+  $("#li").onclick = () => go(false);
+  $("#su").onclick = () => go(true);
+}
+
+function route() {
+  const p = location.hash.slice(2).split("/").map(decodeURIComponent);
+  if (p[0] === "t" && p[2]) chapter(p[1], p[2]);
+  else if (p[0] === "t" && p[1]) story(p[1]);
+  else if (p[0] === "login") login();
+  else home();
+}
+
+function authUI() {
+  $("#auth").innerHTML = user
+    ? `<span class="mut">${esc(user.email)}</span> <button class="ghost" id="lo">Thoát</button>`
+    : `<a href="#/login">Đăng nhập</a>`;
+  if (user) $("#lo").onclick = () => db.auth.signOut();
+}
+
+db.auth.onAuthStateChange((ev, sess) => {
+  const prev = user?.id;
+  user = sess?.user || null;
+  authUI();
+  if (ev === "INITIAL_SESSION" || prev !== user?.id) route();
+});
+addEventListener("hashchange", route);
+</script>
+</body>
+</html>
